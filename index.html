@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal Pelajar IPGKBA</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #033681 url("Bg.png") center/cover no-repeat; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+    .card { background: #fff; width: 100%; max-width: 480px; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+    .logo { display: block; margin: 0 auto 15px; max-width: 180px; }
+    h2 { font-size: 20px; text-align: center; color: #1a252c; margin-bottom: 5px; }
+    .subtitle { font-size: 13px; text-align: center; color: #666; margin-bottom: 20px; }
+    .input-group { display: flex; gap: 8px; margin-bottom: 15px; }
+    input { flex: 1; padding: 12px; border: 2px solid #e1e5ee; border-radius: 8px; font-size: 15px; text-align: center; }
+    button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    
+    .tabs { display: flex; border-bottom: 2px solid #eee; margin-top: 15px; }
+    .tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-weight: bold; color: #666; }
+    .tab.active { border-bottom: 3px solid #007bff; color: #007bff; }
+    .tab-content { display: none; padding-top: 15px; }
+    .tab-content.active { display: block; }
+    
+    /* Styles Butang Tapisan Tahun */
+    .year-filter-container { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 12px; }
+    .year-btn { padding: 6px 12px; background: #f0f2f5; color: #444; border: 1px solid #ddd; border-radius: 20px; font-size: 12px; cursor: pointer; white-space: nowrap; font-weight: 600; }
+    .year-btn.active { background: #007bff; color: white; border-color: #007bff; }
+
+    #qrcode { display: flex; justify-content: center; margin-top: 15px; padding: 10px; background: #fafafa; border-radius: 8px; }
+    .history-item { background: #f8f9fa; border-left: 4px solid #28a745; padding: 10px 12px; margin-bottom: 8px; border-radius: 4px; text-align: left; }
+    .history-title { font-weight: bold; font-size: 14px; color: #333; }
+    .history-meta { font-size: 12px; color: #666; margin-top: 2px; }
+    .error { color: #d9534f; text-align: center; font-size: 14px; margin-top: 10px; }
+    .student-info { text-align: center; color: #2b8a3e; font-weight: bold; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <img src="logo2.png" alt="IPGKBA Logo" class="logo">
+    <h2>Sistem Kehadiran IPGKBA</h2>
+    <p class="subtitle">Isikan Nombor Kad Pengenalan (Tanpa -)</p>
+    
+    <div class="input-group">
+      <input type="text" id="matricInput" placeholder="e.g. 05021801xxxx" autocomplete="off"/>
+      <button onclick="fetchPass()">Semak</button>
+    </div>
+
+    <div id="errorMessage" class="error"></div>
+
+    <div id="portalSection" style="display: none;">
+      <div id="studentName" class="student-info"></div>
+      
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('qrTab')">Pas QR</div>
+        <div class="tab" onclick="switchTab('historyTab')">Rekod Program</div>
+      </div>
+
+      <div id="qrTab" class="tab-content active">
+        <div id="qrcode"></div>
+        <p style="font-size: 11px; color: #888; text-align: center; margin-top: 8px;">
+          QR Kod dikemaskini secara automatik setiap 30 saat.
+        </p>
+      </div>
+
+      <div id="historyTab" class="tab-content">
+        <!-- Bekas Butang Tahun -->
+        <div id="yearFilters" class="year-filter-container"></div>
+        <!-- Senarai Program -->
+        <div id="historyList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyRb1T_R8qOKf1RDEbJVfQo_3-CcIX8wvKhy0PtkkKH06f9YAHDlhoGNK05JeH-DFYm/exec";
+    let qrRefreshInterval = null;
+    let studentDataCache = null;
+    let selectedYearFilter = "ALL";
+
+    function fetchPass() {
+      let matricInput = document.getElementById("matricInput");
+      let matric = matricInput.value.replace(/\D/g, "").trim();
+      let errorDiv = document.getElementById("errorMessage");
+      let portalSection = document.getElementById("portalSection");
+      let nameDiv = document.getElementById("studentName");
+
+      if (qrRefreshInterval) clearInterval(qrRefreshInterval);
+      errorDiv.innerText = "";
+
+      if (!matric) {
+        errorDiv.innerText = "Sila masukkan Nombor IC tanpa hyphen!";
+        portalSection.style.display = "none";
+        return;
+      }
+
+      nameDiv.innerText = "Menyemak Data...";
+      portalSection.style.display = "block";
+
+      fetch(`${GOOGLE_SCRIPT_URL}?action=lookup&matric=${encodeURIComponent(matric)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.found) {
+            studentDataCache = data;
+            nameDiv.innerText = `HI, ${data.student.name} (${data.student.className})`;
+            
+            generateTimedQR();
+            qrRefreshInterval = setInterval(generateTimedQR, 30000);
+            
+            setupYearFilters(data.history);
+            renderHistory(data.history);
+          } else {
+            portalSection.style.display = "none";
+            errorDiv.innerText = "❌ Nombor Kad Pengenalan tidak dijumpai!";
+          }
+        })
+        .catch(err => {
+          portalSection.style.display = "none";
+          errorDiv.innerText = "Ralat pangkalan data: " + err.message;
+        });
+    }
+
+    function generateTimedQR() {
+      let qrDiv = document.getElementById("qrcode");
+      qrDiv.innerHTML = "";
+      if (!studentDataCache) return;
+
+      let payload = `${studentDataCache.student.uniqueCode}|${Date.now()}`;
+      new QRCode(qrDiv, { text: payload, width: 180, height: 180 });
+    }
+
+    // Bina butang tapisan tahun mengikut rekod yang wujud
+    function setupYearFilters(history) {
+      let container = document.getElementById("yearFilters");
+      if (!history || history.length === 0) {
+        container.innerHTML = "";
+        return;
+      }
+
+      // Dapatkan senarai tahun unik
+      let years = [...new Set(history.map(item => item.year))].sort().reverse();
+      selectedYearFilter = "ALL";
+
+      let html = `<button class="year-btn active" onclick="filterByYear('ALL', this)">Semua</button>`;
+      years.forEach(y => {
+        html += `<button class="year-btn" onclick="filterByYear('${y}', this)">${y}</button>`;
+      });
+
+      container.innerHTML = html;
+    }
+
+    function filterByYear(year, btn) {
+      selectedYearFilter = year;
+      document.querySelectorAll('.year-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderHistory(studentDataCache.history);
+    }
+
+    function renderHistory(history) {
+      let container = document.getElementById("historyList");
+      if (!history || history.length === 0) {
+        container.innerHTML = "<p style='font-size: 13px; color: #888; text-align: center;'>Tiada rekod program ditemui.</p>";
+        return;
+      }
+
+      // Tapis data mengikut tahun pilihan
+      let filtered = (selectedYearFilter === "ALL") 
+        ? history 
+        : history.filter(item => item.year === selectedYearFilter);
+
+      if (filtered.length === 0) {
+        container.innerHTML = "<p style='font-size: 13px; color: #888; text-align: center;'>Tiada rekod untuk tahun ini.</p>";
+        return;
+      }
+
+      container.innerHTML = filtered.map(item => `
+        <div class="history-item">
+          <div class="history-title">${item.programName}</div>
+          <div class="history-meta">Tarikh: ${item.programDate} | Lokasi: ${item.location}</div>
+          <div class="history-meta" style="color: #28a745;">Imbas: ${item.timestamp}</div>
+        </div>
+      `).join('');
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      if (tabId === 'qrTab') {
+        document.querySelectorAll('.tab')[0].classList.add('active');
+      } else {
+        document.querySelectorAll('.tab')[1].classList.add('active');
+      }
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    document.getElementById("matricInput").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") fetchPass();
+    });
+    // 1. Fungsi pembantu untuk dapatkan tahun tanpa 'undefined'
+function getYearFromRecord(item) {
+  if (item.year && item.year !== "undefined") return item.year;
+  
+  // Cuba cari 4 digit tahun dari programDate (e.g., "2026-10-31")
+  let match = item.programDate ? item.programDate.match(/\d{4}/) : null;
+  if (match) return match[0];
+
+  // Jika tiada, cuba cari dari timestamp imbasan (e.g., "29/10/2026")
+  match = item.timestamp ? item.timestamp.match(/\d{4}/) : null;
+  if (match) return match[0];
+
+  return new Date().getFullYear().toString(); // Fallback ke tahun semasa
+}
+
+// 2. Kemaskini fungsi setupYearFilters
+function setupYearFilters(history) {
+  let container = document.getElementById("yearFilters");
+  if (!history || history.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+
+  // Gunakan getYearFromRecord supaya tidak akan dapat 'undefined'
+  let years = [...new Set(history.map(item => getYearFromRecord(item)))].sort().reverse();
+  selectedYearFilter = "ALL";
+
+  let html = `<button class="year-btn active" onclick="filterByYear('ALL', this)">Semua</button>`;
+  years.forEach(y => {
+    html += `<button class="year-btn" onclick="filterByYear('${y}', this)">${y}</button>`;
+  });
+
+  container.innerHTML = html;
+}
+
+// 3. Kemaskini fungsi renderHistory
+function renderHistory(history) {
+  let container = document.getElementById("historyList");
+  if (!history || history.length === 0) {
+    container.innerHTML = "<p style='font-size: 13px; color: #888; text-align: center;'>Tiada rekod program ditemui.</p>";
+    return;
+  }
+
+  // Tapis menggunakan getYearFromRecord
+  let filtered = (selectedYearFilter === "ALL") 
+    ? history 
+    : history.filter(item => getYearFromRecord(item) === selectedYearFilter);
+
+  if (filtered.length === 0) {
+    container.innerHTML = "<p style='font-size: 13px; color: #888; text-align: center;'>Tiada rekod untuk tahun ini.</p>";
+    return;
+  }
+
+  container.innerHTML = filtered.map(item => `
+    <div class="history-item">
+      <div class="history-title">${item.programName}</div>
+      <div class="history-meta">Tarikh: ${item.programDate} | Lokasi: ${item.location}</div>
+      <div class="history-meta" style="color: #28a745;">Imbas: ${item.timestamp}</div>
+    </div>
+  `).join('');
+}
+  </script>
+</body>
+</html>
